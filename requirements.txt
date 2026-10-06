@@ -1,0 +1,5 @@
+# 运行依赖（spec §10：核心依赖优先 pandas + numpy + yfinance）
+pandas>=2.0
+numpy>=1.26
+yfinance>=0.2.40
+PyYAML>=6.0

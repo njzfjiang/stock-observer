@@ -1,0 +1,16 @@
+# 虚拟环境
+.venv/
+venv/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest_tmp*/
+
+# 运行产物（日报/JSON/CSV/日志是本地产物，不进版本库）
+outputs/
+logs/
+build/

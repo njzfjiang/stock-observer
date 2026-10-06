@@ -1,0 +1,48 @@
+# 关注列表：每行一个美股 ticker。
+# '#' 开头整行是注释；行尾也可以写注释，例如：  NVDA  # 英伟达
+# 改完直接 python main.py，不需要动代码。
+#
+# 注意：SPY / QQQ 会出现在日报的「市场概况」板块（config.yaml → project.market_tickers），
+# 同时 QQQ 也是「相对强弱 vs QQQ」的比较基准（config.yaml → project.benchmark）。
+
+AAPL
+MSFT
+NVDA
+GOOGL
+AMZN
+META
+AVGO
+TSLA
+QQQ
+SPY
+FUTU
+XZO
+VAL
+DAVE
+WDC
+AFRM
+APP
+TMDX
+KRYS
+YMM
+TSM
+PAYP
+JCAP
+PAYP
+JCAP
+AVGO
+DUOL
+BZ
+ERO
+HOOD
+FNV
+PLTR
+PTCT
+NEM
+GFI
+LLY
+WPM
+OR
+SKHY
+AEM
+VRTX

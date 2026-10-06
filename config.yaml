@@ -1,0 +1,97 @@
+# ============================================================
+#  Poor Man's Bloomberg / 美股科技股每日监控器  v0.1
+#  所有阈值、权重、路径都集中在这里（spec §6 / §10）：
+#  代码里不散落魔法数字，改了配置不用改代码。
+# ============================================================
+
+project:
+  name: "美股科技股每日监控器"
+  benchmark: "QQQ"          # 相对强弱（Relative Strength）的比较基准
+  market_tickers:           # 日报「市场概况」板块的指数/ETF（同时也会出现在个股速览表里）
+    - SPY
+    - QQQ
+
+history:
+  period: "2y"                    # 252 个日收益需要至少 253 个有效价格点，并给休市/缺失留余量
+  interval: "1d"
+  timeout_seconds: 15
+  min_rows: 30                    # 少于这么多行就判定为 DATA_UNAVAILABLE
+  retry_failed_individually: true  # 批量下载里失败的 ticker 再单独重试一次（抗抖动）
+
+indicators:
+  sma_windows: [20, 50, 200]
+  rsi_period: 14
+  return_windows: [1, 5, 20, 60]   # 交易日
+  volume_window: 20                # Volume Ratio 的分母：今日之前 N 个交易日（不含今日）
+  volatility_window: 20
+  trading_days_per_year: 252
+  drawdown_lookback_days: 252      # 「近期高点」的回看窗口；超过可用行数时自动收缩
+  relative_strength_window: 20     # vs QQQ 的比较周期（交易日）
+  new_high_low_window: 20          # NEW_20D_HIGH / NEW_20D_LOW 的回看窗口（不含今日）
+
+risk:
+  window: 252                      # 严格窗口：不足时输出 DATA_INSUFFICIENT，不自动缩短
+  annual_risk_free_rate: 0.04      # 年化小数；4% 写 0.04。此为可调整假设，不会硬编码进计算逻辑
+
+thresholds:
+  high_volume_ratio: 2.0    # Volume Ratio >= 2.0  → HIGH_VOLUME
+  large_move_pct: 4.0       # |1D 涨跌幅| >= 4%    → LARGE_MOVE
+  rsi_overbought: 70        # RSI14 >= 70           → OVERBOUGHT
+  rsi_oversold: 30          # RSI14 <= 30           → OVERSOLD
+
+report:
+  top_n: 5                          # 「需关注个股」展开详细卡片的最大数量
+  exclude_market_tickers_from_attention: true   # 关注度排序里排除 SPY/QQQ（它们单独在「市场概况」）
+  include_full_table: true          # 附上「全部标的速览」表
+  decimals:
+    price: 2
+    pct: 2
+    ratio: 2
+    rsi: 1
+    score: 1
+
+# ------------------------------------------------------------
+# §6 关注度评分（Attention Score 0–100）
+# 表达的是「今天值不值得打开看一眼」，不是预期收益，也不是买入评分。
+# 每个分项 = 权重 × 达成度[0,1]；总分 = 各分项之和（最大 100）。
+# 趋势分项刻意不区分方向：强上涨和强下跌都值得看。
+# ------------------------------------------------------------
+attention_score:
+  enabled: true
+  trend:
+    weight: 30
+    scores:
+      STRONG_UPTREND: 1.0
+      UPTREND: 0.55
+      NEUTRAL: 0.0
+      DOWNTREND: 0.55
+      STRONG_DOWNTREND: 1.0
+      INSUFFICIENT_DATA: 0.0
+  momentum_20d:
+    weight: 20
+    full_credit_abs_return_pct: 15.0   # |20D 收益| >= 15% 拿满分
+  relative_strength:
+    weight: 20
+    full_credit_abs_diff_pct: 10.0     # |20D 相对 QQQ 超额| >= 10% 拿满分
+  volume_activity:
+    weight: 15
+    baseline_ratio: 1.0                # 量比 = 1.0（等于平时水平）记 0 分
+    full_credit_ratio: 2.5             # 量比 >= 2.5 拿满分
+  price_event:
+    weight: 15
+    per_alert_credit: 0.5              # 每个「价格事件类」alert 记 50%，封顶 100%
+    alerts: [LARGE_MOVE, NEW_20D_HIGH, NEW_20D_LOW, OVERBOUGHT, OVERSOLD]
+
+outputs:
+  dir: "outputs"                  # 相对 config.yaml 所在目录
+  daily_report: "daily_report.md"
+  analysis_input: "analysis_input.json"
+  raw_metrics: "raw_metrics.csv"
+  json_indent: 2
+
+logging:
+  level: "INFO"
+  file: "logs/run.log"
+  format: "%(asctime)s %(levelname)-7s %(message)s"
+  datefmt: "%Y-%m-%d %H:%M:%S"
+  quiet_third_party: true   # 压掉 yfinance 自己往 root logger 灌的原始报错（我们自己的 WARNING 已说明原因）
