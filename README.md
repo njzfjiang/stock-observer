@@ -204,7 +204,7 @@ AI 买卖建议、复杂回测、数据库、React Dashboard。
 
 工作流 `.github/workflows/daily-pages.yml` 会：
 
-1. 每周一至周五美东时间 17:23 自动运行，也支持 Actions 页面手动触发；
+1. 每周一至周五 22:37 UTC 自动运行（美东夏令时 18:37 / 冬令时 17:37），也支持 Actions 页面手动触发；
 2. 安装依赖并执行全部离线测试；
 3. 获取行情并把本次产物写入临时 `build/run/`；
 4. 生成静态仪表板以及 `latest.json`、`daily_report.md`、`raw_metrics.csv`；

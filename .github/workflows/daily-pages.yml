@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "23 17 * * 1-5"
-      timezone: "America/New_York"
+    # 22:37 UTC = 18:37 ET during daylight time / 17:37 ET during standard time.
+    # Both are safely after the regular US market close, without timezone-aware scheduling.
+    - cron: "37 22 * * 1-5"
   workflow_dispatch:
 
 permissions:
