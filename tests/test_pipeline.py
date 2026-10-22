@@ -82,7 +82,8 @@ def test_run_produces_three_files_and_survives_a_bad_ticker(local_settings, offl
     assert "## 一、市场概况" in report
     assert "## 二、需关注个股" in report
     assert "## 三、全部标的速览" in report
-    assert "## 四、数据缺失（DATA_UNAVAILABLE）" in report
+    assert "## 四、新闻与情绪" in report
+    assert "## 五、数据缺失（DATA_UNAVAILABLE）" in report
     assert "DATA_UNAVAILABLE" in report and "BADTICK" in report
     assert "Attention Score" in report
     assert "分数构成" in report
@@ -165,7 +166,7 @@ def test_all_tickers_failing_still_writes_a_report(local_settings, offline_fetch
     assert result.rows == []
     assert result.data_as_of is None
     report, payload, metrics = read_outputs(result)
-    assert "## 四、数据缺失（DATA_UNAVAILABLE）" in report
+    assert "## 五、数据缺失（DATA_UNAVAILABLE）" in report
     assert "BAD1" in report and "BAD2" in report
     assert payload["ticker_count_ok"] == 0
     assert len(payload["data_unavailable"]) == 2
@@ -197,3 +198,37 @@ def test_generated_at_is_recorded(local_settings, offline_fetch):
     _, payload, _ = read_outputs(result)
     assert payload["generated_at"] == "2026-10-05 21:00:00 CST"
     assert result.generated_at == "2026-10-05 21:00:00 CST"
+
+
+def test_news_is_attached_without_changing_attention_score(local_settings, offline_fetch):
+    logger = __import__("logging").getLogger("stock_observer")
+    article = {
+        "id": "article-1", "title": "Product update", "source": "Wire",
+        "published_at": "2026-10-05T18:00:00Z", "url": "https://example.com/story",
+        "associated_tickers": ["AAPL"],
+        "ticker_sentiment": {"AAPL": {"sentiment_score": 0.4, "sentiment_label": "Bullish", "relevance_score": 0.8}},
+    }
+
+    def news_fetch(_tickers, _settings, _logger):
+        return {
+            "status": "OK", "provider": "alpha_vantage", "lookback_hours": 24,
+            "articles": [article], "errors": {},
+            "ticker_summaries": {
+                "AAPL": {
+                    "status": "OK", "article_count_24h": 1, "positive_count": 1,
+                    "neutral_count": 0, "negative_count": 0, "sentiment_score_24h": 0.4,
+                    "sentiment_label_24h": "Bullish", "article_ids": ["article-1"],
+                }
+            },
+        }
+
+    result = run_pipeline(
+        local_settings, ["AAPL"], logger, fetch_func=offline_fetch(fail=()), news_fetch_func=news_fetch,
+    )
+    report, payload, metrics = read_outputs(result)
+    row = payload["tickers"][0]
+    assert row["news"]["sentiment_score_24h"] == pytest.approx(0.4)
+    assert row["news"]["articles"][0]["title"] == "Product update"
+    assert metrics.loc[0, "news_article_count_24h"] == 1
+    assert "Product update" in report
+    assert row["attention_score"] == result.rows[0]["attention_score"]

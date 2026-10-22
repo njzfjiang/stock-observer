@@ -1,4 +1,4 @@
-# Poor Man's Bloomberg / 美股科技股每日监控器 v0.1
+# Poor Man's Bloomberg / 美股科技股每日监控器 v0.1.2
 
 每日获取指定美股的历史行情，用**透明、可复现的规则**算出趋势与异常标签，生成：
 
@@ -176,12 +176,13 @@ attention_score:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest            # 56 个测试，全部离线（注入假数据，不联网）
+python -m pytest            # 62 个测试，全部离线（注入假数据，不联网）
 ```
 
 覆盖：指标口径 vs pandas/numpy 手算、数据不足时不许出现 NaN、趋势五分类与边界、异常标签的阈值边界
 （含 `>=` 与 `<` 的临界值）、Attention Score 各项之和 = 总分、失败 ticker 不影响其他股票、
-相对强弱口径、风险指标严格窗口与零波动边界、清洗后最小行数、三份产出文件的存在与结构。
+相对强弱口径、风险指标严格窗口与零波动边界、清洗后最小行数、新闻去重/聚合/限流降级、
+三份产出文件的存在与结构。
 
 > `pytest.ini` 里设了 `--basetemp=.pytest_tmp`：本机 `%TEMP%` 下的 pytest 临时目录无访问权限，
 > 临时文件统一放到项目内的 `.pytest_tmp/`（已 gitignore）。
@@ -197,7 +198,7 @@ python -m pytest            # 56 个测试，全部离线（注入假数据，�
 
 ## 8. 明确不做（v0.1）
 
-实时行情、分钟级、自动下单、券商连接、期权、新闻情绪、财报 NLP、LLM 自动调用、收益预测、
+实时行情、分钟级、自动下单、券商连接、期权、财报 NLP、LLM 自动调用、收益预测、
 AI 买卖建议、复杂回测、数据库、React Dashboard。
 
 ## 9. GitHub Actions + Pages 自动发布
@@ -218,6 +219,10 @@ AI 买卖建议、复杂回测、数据库、React Dashboard。
 1. 打开 **Settings → Pages**；
 2. 在 **Build and deployment → Source** 选择 **GitHub Actions**；
 3. 在 **Actions** 页面手动运行一次 **Daily market report**，或等待下一次定时任务。
+
+新闻情绪使用 Alpha Vantage `NEWS_SENTIMENT`。在本地设置环境变量 `ALPHA_VANTAGE_API_KEY`；
+在 GitHub Actions 中创建同名 Repository secret。未配置、限流或网络失败时会显示
+`NEWS_UNAVAILABLE`，但技术指标报告与 Pages 发布仍会继续。
 
 发布地址通常为 `https://<github-user>.github.io/stock-observer/`。定时工作流只会从 GitHub
 仓库的默认分支运行，因此 workflow 文件必须存在于默认分支。

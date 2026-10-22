@@ -123,6 +123,7 @@ def build_daily_report(
     interval: str = "1d",
     benchmark: str = "QQQ",
     market_tickers: Sequence[str] = (),
+    news: Mapping[str, Any] | None = None,
 ) -> str:
     """拼出完整的 daily_report.md 文本。"""
     benchmark = str(benchmark).upper()
@@ -154,8 +155,10 @@ def build_daily_report(
     lines.extend(_attention_section(rows, settings, market_set, benchmark))
     lines.extend(_all_tickers_section(rows, settings, benchmark))
 
+    lines.extend(_news_section(rows, news or {}, settings))
+
     # 数据缺失
-    lines.append("## 四、数据缺失（DATA_UNAVAILABLE）")
+    lines.append("## 五、数据缺失（DATA_UNAVAILABLE）")
     lines.append("")
     if failures:
         for ticker, reason in failures.items():
@@ -396,6 +399,48 @@ def _all_tickers_section(rows: Sequence[Mapping[str, Any]], settings, benchmark:
     return lines
 
 
+def _news_section(rows: Sequence[Mapping[str, Any]], news: Mapping[str, Any], settings) -> list[str]:
+    lookback = int(news.get("lookback_hours") or settings.get("news", "lookback_hours", default=24))
+    lines = ["## 四、新闻与情绪（News / Sentiment）", ""]
+    lines.append("新闻情绪仅作辅助信息，不参与 Trend、Alerts 或 Attention Score，也不用于推断价格变动原因。")
+    lines.append("")
+    status = str(news.get("status") or "NEWS_UNAVAILABLE")
+    if status in {"NEWS_UNAVAILABLE", "DISABLED"}:
+        reason = str(news.get("reason") or "No sentiment data available.")
+        lines.append(f"`{status}` — No sentiment data available. ({reason})")
+        lines.append("")
+        return lines
+
+    lines.append(f"- **Provider**：{news.get('provider', 'n/a')} · **Lookback**：{lookback}h · **Status**：{status}")
+    lines.append("")
+    for row in rows:
+        ticker = str(row.get("ticker", ""))
+        summary = row.get("news") if isinstance(row.get("news"), dict) else {}
+        count = int(summary.get("article_count_24h") or 0)
+        score = summary.get("sentiment_score_24h")
+        label = summary.get("sentiment_label_24h") or "No sentiment data available"
+        lines.append(f"### {ticker} — {label}")
+        lines.append("")
+        lines.append(
+            f"Articles: {count} · Sentiment: {fmt_score(score, 3)} · "
+            f"Positive/Neutral/Negative: {int(summary.get('positive_count') or 0)}/"
+            f"{int(summary.get('neutral_count') or 0)}/{int(summary.get('negative_count') or 0)}"
+        )
+        lines.append("")
+        for article in summary.get("articles") or []:
+            ticker_data = (article.get("ticker_sentiment") or {}).get(ticker) or {}
+            title = str(article.get("title") or "Untitled").replace("[", "\\[").replace("]", "\\]")
+            lines.append(
+                f"- [{title}]({article.get('url')}) — {article.get('source') or 'Unknown'}, "
+                f"{article.get('published_at') or 'n/a'}; sentiment "
+                f"{ticker_data.get('sentiment_label') or 'n/a'} ({fmt_score(ticker_data.get('sentiment_score'), 3)})"
+            )
+        if not count:
+            lines.append("- No sentiment data available.")
+        lines.append("")
+    return lines
+
+
 def _definitions_section(settings, benchmark: str, period: str, interval: str) -> list[str]:
     indicator_cfg = settings.section("indicators")
     thresholds = settings.section("thresholds")
@@ -406,7 +451,7 @@ def _definitions_section(settings, benchmark: str, period: str, interval: str) -
     risk_window = int(settings.get("risk", "window", default=252))
     risk_free_pct = float(settings.get("risk", "annual_risk_free_rate", default=0.0)) * 100.0
 
-    lines = ["## 五、指标口径与免责", ""]
+    lines = ["## 六、指标口径与免责", ""]
     lines.append(f"- **收益率（1D/5D/20D/60D）**：用复权收盘价 Adj Close 计算，避免分红/拆股把历史收益算歪。")
     lines.append(f"- **SMA20/50/200、RSI14、旧版距近期高点、新高新低**：用原始收盘价 Close 计算，和公开行情页面上的数字对得上。")
     lines.append(f"- **RSI14**：Wilder 平滑（α=1/14）；价格完全不动时记 50（中性）。")
@@ -436,6 +481,7 @@ def _definitions_section(settings, benchmark: str, period: str, interval: str) -
         f"权重在 `config.yaml` 的 `attention_score` 段，可改。"
     )
     lines.append(f"- **数据窗口**：`period={period}`, `interval={interval}`（{benchmark} 为相对强弱基准）。")
+    lines.append("- **新闻情绪**：按 ticker relevance 与时间衰减加权；无有效新闻时为 null，而不是 neutral。新闻与技术事实分开展示，不作因果判断。")
     lines.append("")
     lines.append("**免责声明**：本工具是市场监控 / 数据摘要工具，不是自动交易系统，也不是投资顾问。所有标签只描述当前状态，不构成任何买入或卖出建议。行情数据来自 Yahoo Finance（经 yfinance），仅供家庭/个人研究使用，不对外分发或转售。")
     lines.append("")

@@ -32,6 +32,15 @@ def test_build_site_copies_downloads_and_escapes_external_values(tmp_path):
                 "attention_score": 75,
                 "risk": {"current_drawdown_pct": -5, "max_drawdown_pct": -10, "sharpe_ratio": 1.2},
                 "alerts": ["<script>alert(1)</script>"],
+                "news": {
+                    "article_count_24h": 1,
+                    "sentiment_score_24h": 0.4,
+                    "sentiment_label_24h": "Bullish",
+                    "positive_count": 1,
+                    "neutral_count": 0,
+                    "negative_count": 0,
+                    "articles": [{"title": "Earnings <update>", "url": "https://example.com/a", "source": "Wire", "published_at": "2026-10-05T12:00:00Z"}],
+                },
             },
         ],
         "data_unavailable": [],
@@ -46,6 +55,7 @@ def test_build_site_copies_downloads_and_escapes_external_values(tmp_path):
     assert "&lt;AAPL&gt;" in page
     assert "<script>alert(1)</script>" not in page
     assert "latest.json" in page and "daily_report.md" in page and "raw_metrics.csv" in page
+    assert "Earnings &lt;update&gt;" in page and "Bullish" in page
     assert json.loads((target / "latest.json").read_text(encoding="utf-8")) == payload
     assert (target / ".nojekyll").exists()
 

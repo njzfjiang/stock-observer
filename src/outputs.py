@@ -60,6 +60,13 @@ METRIC_COLUMNS: list[str] = [
     "alert_details",
     "attention_score",
     "attention_score_max",
+    "news_status",
+    "news_article_count_24h",
+    "news_positive_count",
+    "news_neutral_count",
+    "news_negative_count",
+    "news_sentiment_score_24h",
+    "news_sentiment_label_24h",
     "history_rows",
     "notes",
 ]
@@ -127,6 +134,18 @@ def write_raw_metrics_csv(path: Path, rows: Sequence[Mapping[str, Any]], failure
     for row in rows:
         record = {column: _csv_value(row.get(column)) for column in columns}
         record["status"] = row.get("status", "OK")
+        news = row.get("news") if isinstance(row.get("news"), dict) else {}
+        record.update(
+            {
+                "news_status": _csv_value(news.get("status")),
+                "news_article_count_24h": _csv_value(news.get("article_count_24h")),
+                "news_positive_count": _csv_value(news.get("positive_count")),
+                "news_neutral_count": _csv_value(news.get("neutral_count")),
+                "news_negative_count": _csv_value(news.get("negative_count")),
+                "news_sentiment_score_24h": _csv_value(news.get("sentiment_score_24h")),
+                "news_sentiment_label_24h": _csv_value(news.get("sentiment_label_24h")),
+            }
+        )
         for component in row.get("attention_components") or []:
             record[f"{SCORE_COLUMN_PREFIX}{component.get('key')}"] = _csv_value(component.get("points"))
         records.append(record)
@@ -161,6 +180,7 @@ def build_analysis_input(
     watchlist_size: int,
     period: str,
     interval: str,
+    news: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """构造喂给 AI 的结构化 JSON（Python 是事实层，ChatGPT 是解释层）。"""
     thresholds = dict(settings.section("thresholds"))
@@ -211,6 +231,7 @@ def build_analysis_input(
                     for component in (row.get("attention_components") or [])
                 ],
                 "notes": list(row.get("notes") or []),
+                "news": dict(row.get("news") or {}),
             }
         )
         tickers.append(payload)
@@ -236,6 +257,7 @@ def build_analysis_input(
             "annual_risk_free_rate": float(settings.get("risk", "annual_risk_free_rate", default=0.0)),
             "risk_free_rate_annual_pct": float(settings.get("risk", "annual_risk_free_rate", default=0.0)) * 100.0,
         },
+        "news": dict(news or {}),
         "field_notes": _field_notes(benchmark, thresholds, settings),
         "disclaimer": (
             "本文件由 Python 规则引擎确定性生成，只包含已观测到的历史行情与派生指标。"
@@ -276,6 +298,7 @@ def _field_notes(benchmark: str, thresholds: Mapping[str, Any], settings) -> dic
         ),
         "attention_score": "0-100 的「今天值不值得打开看一眼」评分，由趋势/动量/相对强弱/量能/价格事件加权而成（attention_score_breakdown 给出逐项证据）。分数高不等于看涨。",
         "data_unavailable": "抓取失败的标的。禁止推测或补全其数值，只能表述为「数据不足」。",
+        "news": "新闻情绪是辅助事实，不参与 Trend、Alerts 或 Attention Score；缺失不是 neutral，也不得用于推断价格因果。",
         "trend_display": "；".join(f"{key} = {value}" for key, value in TREND_DISPLAY.items()),
     }
 

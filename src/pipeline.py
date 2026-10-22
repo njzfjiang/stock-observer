@@ -16,6 +16,7 @@ from . import report as report_module
 from .config import Settings
 from .fetcher import fetch_all
 from .indicators import summarize
+from .news import fetch_news
 from .outputs import (
     build_analysis_input,
     rs_column,
@@ -27,6 +28,7 @@ from .rules import alert_details, classify_trend, detect_alerts
 from .scoring import attention_score
 
 FetchFunc = Callable[[Iterable[str], Settings, Any], tuple[dict[str, pd.DataFrame], dict[str, str]]]
+NewsFetchFunc = Callable[[Sequence[str], Settings, Any], dict[str, Any]]
 
 EXIT_OK = 0
 EXIT_ALL_FAILED = 2
@@ -44,6 +46,7 @@ class RunResult:
     benchmark: str = "QQQ"
     market_tickers: list[str] = field(default_factory=list)
     output_paths: dict[str, Path] = field(default_factory=dict)
+    news: dict[str, Any] = field(default_factory=dict)
     exit_code: int = EXIT_OK
 
 
@@ -58,6 +61,7 @@ def run_pipeline(
     logger,
     *,
     fetch_func: FetchFunc | None = None,
+    news_fetch_func: NewsFetchFunc | None = None,
     now: Callable[[], str] | None = None,
 ) -> RunResult:
     """跑完整条流水线并落盘三份文件。返回 RunResult。"""
@@ -96,6 +100,19 @@ def run_pipeline(
     if data_as_of is None:
         logger.warning("没有可用数据，生成的日报会标记全部 DATA_UNAVAILABLE")
 
+    # 新闻是辅助信息层；其任何失败都不能改变行情结果或 exit code。
+    news_fetcher = news_fetch_func or fetch_news
+    try:
+        news = news_fetcher(tickers, settings, logger)
+    except Exception as exc:  # 自定义 provider/注入函数也必须遵守 fail-safe
+        logger.warning("News unavailable: %s: %s", type(exc).__name__, exc)
+        news = {
+            "status": "NEWS_UNAVAILABLE", "provider": settings.get("news", "provider", default="alpha_vantage"),
+            "lookback_hours": settings.get("news", "lookback_hours", default=24), "reason": f"{type(exc).__name__}: {exc}",
+            "articles": [], "ticker_summaries": {}, "errors": {},
+        }
+    _attach_news(rows, news)
+
     # ---- 落盘 ----
     outputs_dir = settings.outputs_dir
     report_path = settings.output_path("daily_report")
@@ -112,6 +129,7 @@ def run_pipeline(
         interval=interval,
         benchmark=benchmark,
         market_tickers=market_tickers,
+        news=news,
     )
     write_text(report_path, report_text)
     logger.info("Report generated: %s", _relative(report_path, outputs_dir.parent))
@@ -127,6 +145,7 @@ def run_pipeline(
         watchlist_size=len(tickers),
         period=period,
         interval=interval,
+        news=news,
     )
     write_json(analysis_path, payload, indent=int(settings.get("outputs", "json_indent", default=2) or 2))
     logger.info("Analysis input written: %s", _relative(analysis_path, outputs_dir.parent))
@@ -151,8 +170,26 @@ def run_pipeline(
         benchmark=benchmark,
         market_tickers=market_tickers,
         output_paths={"daily_report": report_path, "analysis_input": analysis_path, "raw_metrics": metrics_path},
+        news=news,
         exit_code=exit_code,
     )
+
+
+def _attach_news(rows: Sequence[dict[str, Any]], news: Mapping[str, Any]) -> None:
+    summaries = news.get("ticker_summaries") if isinstance(news.get("ticker_summaries"), dict) else {}
+    articles = news.get("articles") if isinstance(news.get("articles"), list) else []
+    by_id = {str(article.get("id")): article for article in articles if isinstance(article, dict)}
+    for row in rows:
+        ticker = str(row.get("ticker", "")).upper()
+        summary = dict(summaries.get(ticker) or {})
+        if not summary:
+            summary = {
+                "status": news.get("status", "NEWS_UNAVAILABLE"), "article_count_24h": 0,
+                "positive_count": 0, "neutral_count": 0, "negative_count": 0,
+                "sentiment_score_24h": None, "sentiment_label_24h": None, "article_ids": [],
+            }
+        summary["articles"] = [by_id[article_id] for article_id in summary.get("article_ids", []) if article_id in by_id]
+        row["news"] = summary
 
 
 def _compute_metrics_row(

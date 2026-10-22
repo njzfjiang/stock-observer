@@ -51,6 +51,7 @@ def render_index(payload: Mapping[str, Any]) -> str:
 
     market_html = "".join(_market_card(row) for row in market_rows) or '<p class="empty">暂无市场基准数据。</p>'
     attention_html = "".join(_attention_card(row, rank) for rank, row in enumerate(attention_rows[:5], 1))
+    news_html = "".join(_news_card(row) for row in rows) or '<p class="empty">暂无新闻情绪数据。</p>'
     table_html = "".join(_table_row(row) for row in rows)
     unavailable_html = "".join(
         f"<li><strong>{_e(item.get('ticker'))}</strong>: {_e(item.get('reason'))}</li>" for item in unavailable
@@ -114,6 +115,7 @@ def render_index(payload: Mapping[str, Any]) -> str:
     <h2>市场概况</h2><section class="cards">{market_html}</section>
     <h2>需关注个股</h2><p class="note">按 Attention Score 排序；高分表示值得查看，不代表看涨。</p><section class="cards">{attention_html}</section>
     <h2>全部标的</h2><section class="panel scroll"><table><thead><tr><th>Ticker</th><th>Close</th><th>1D</th><th>20D</th><th>Trend</th><th>RSI14</th><th>量比</th><th>vs {_e(payload.get('benchmark'))}</th><th>Current DD</th><th>Max DD</th><th>Sharpe</th><th>Score</th></tr></thead><tbody>{table_html}</tbody></table></section>
+    <h2>新闻与情绪</h2><p class="note">辅助信息，不参与技术评分，也不表示价格变动的原因。</p><section class="cards">{news_html}</section>
     <h2>数据缺失</h2><section class="panel"><ul class="failures">{unavailable_html}</ul></section>
   </main>
   <footer><div class="wrap">{_e(payload.get('disclaimer'))}<br>数据源：{_e(payload.get('data_source'))}</div></footer>
@@ -175,6 +177,24 @@ def _table_row(row: Mapping[str, Any]) -> str:
     ]
     tones = ["", "", _tone(row.get("return_1d_pct")), _tone(row.get("return_20d_pct")), "", "", "", _tone(row.get("relative_strength_20d_vs_qqq")), _tone(risk.get("current_drawdown_pct")), _tone(risk.get("max_drawdown_pct")), _tone(risk.get("sharpe_ratio")), ""]
     return "<tr>" + "".join(f'<td class="{tone}">{value}</td>' for value, tone in zip(values, tones)) + "</tr>"
+
+
+def _news_card(row: Mapping[str, Any]) -> str:
+    ticker = str(row.get("ticker", ""))
+    news = row.get("news") if isinstance(row.get("news"), dict) else {}
+    score = news.get("sentiment_score_24h")
+    label = news.get("sentiment_label_24h") or "No sentiment data available"
+    articles = news.get("articles") if isinstance(news.get("articles"), list) else []
+    links = "".join(
+        f'<li><a href="{_e(article.get("url"))}" rel="noopener noreferrer">{_e(article.get("title"))}</a>'
+        f'<br><span class="note">{_e(article.get("source"))} · {_e(article.get("published_at"))}</span></li>'
+        for article in articles
+        if isinstance(article, dict)
+    ) or '<li class="empty">No sentiment data available.</li>'
+    return f'''<article class="card"><div class="card-head"><div><div class="ticker">{_e(ticker)}</div>
+      <div class="note">{_e(label)}</div></div><span class="score">{_number(score, 3)}</span></div>
+      <p class="note">Articles: {_e(news.get("article_count_24h", 0))} · Positive/Neutral/Negative: {_e(news.get("positive_count", 0))}/{_e(news.get("neutral_count", 0))}/{_e(news.get("negative_count", 0))}</p>
+      <ul>{links}</ul></article>'''
 
 
 def _number(value: Any, decimals: int) -> str:

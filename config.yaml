@@ -33,6 +33,15 @@ risk:
   window: 252                      # 严格窗口：不足时输出 DATA_INSUFFICIENT，不自动缩短
   annual_risk_free_rate: 0.04      # 年化小数；4% 写 0.04。此为可调整假设，不会硬编码进计算逻辑
 
+news:
+  enabled: true
+  provider: "alpha_vantage"
+  lookback_hours: 24
+  max_articles_per_ticker: 5
+  max_tickers_per_run: 15
+  timeout_seconds: 15
+  recency_half_life_hours: 24
+
 thresholds:
   high_volume_ratio: 2.0    # Volume Ratio >= 2.0  → HIGH_VOLUME
   large_move_pct: 4.0       # |1D 涨跌幅| >= 4%    → LARGE_MOVE
