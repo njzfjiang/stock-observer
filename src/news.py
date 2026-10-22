@@ -1,4 +1,4 @@
-"""Alpha Vantage 新闻情绪获取、去重与按 ticker 聚合。
+"""Marketaux/Alpha Vantage 新闻情绪获取、去重与按 ticker 聚合。
 
 新闻是辅助事实层：失败不得中断行情流水线，也不得参与任何交易/关注度规则。
 """
@@ -12,13 +12,15 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 NEWS_UNAVAILABLE = "NEWS_UNAVAILABLE"
 NEWS_OK = "OK"
 NEWS_PARTIAL = "PARTIAL"
 NEWS_DISABLED = "DISABLED"
 API_URL = "https://www.alphavantage.co/query"
+MARKETAUX_API_URL = "https://api.marketaux.com/v1/news/all"
 
 OpenUrl = Callable[..., Any]
 
@@ -34,11 +36,13 @@ def fetch_news(
 ) -> dict[str, Any]:
     """逐 ticker 获取新闻，并返回可序列化的全局去重结果。"""
     cfg = settings.section("news")
-    provider = str(cfg.get("provider", "alpha_vantage"))
+    provider = str(cfg.get("provider", "marketaux"))
     base = _empty_result(provider, int(cfg.get("lookback_hours", 24)))
     if not bool(cfg.get("enabled", False)):
         base.update(status=NEWS_DISABLED, reason="news is disabled")
         return base
+    if provider == "marketaux":
+        return _fetch_marketaux(tickers, settings, logger, opener=opener, now_utc=now_utc, environ=environ)
     if provider != "alpha_vantage":
         base.update(status=NEWS_UNAVAILABLE, reason=f"unsupported news provider: {provider}")
         logger.warning("News unavailable: unsupported provider %s", provider)
@@ -79,7 +83,8 @@ def fetch_news(
         base["requests_attempted"] += 1
         attempted.append(ticker)
         try:
-            with open_url(f"{API_URL}?{urlencode(params)}", timeout=timeout) as response:
+            request = _api_request(f"{API_URL}?{urlencode(params)}")
+            with open_url(request, timeout=timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             provider_error = _provider_error(payload)
             if provider_error:
@@ -115,7 +120,7 @@ def fetch_news(
             errors[ticker] = "skipped after provider rate limit"
     articles = sorted(article_map.values(), key=lambda item: item.get("published_at") or "", reverse=True)
     summaries = {
-        ticker: _summarize_ticker(ticker, articles, current, cfg)
+        ticker: _summarize_ticker(ticker, articles, current, cfg, provider="alpha_vantage")
         for ticker in selected
     }
     for ticker, reason in errors.items():
@@ -139,6 +144,117 @@ def fetch_news(
     return base
 
 
+def _fetch_marketaux(
+    tickers: Sequence[str],
+    settings,
+    logger,
+    *,
+    opener: OpenUrl | None,
+    now_utc: datetime | None,
+    environ: Mapping[str, str] | None,
+) -> dict[str, Any]:
+    cfg = settings.section("news")
+    base = _empty_result("marketaux", int(cfg.get("lookback_hours", 24)))
+    env = os.environ if environ is None else environ
+    api_key = str(env.get("MARKETAUX_API_KEY", "")).strip()
+    if not api_key:
+        base.update(status=NEWS_UNAVAILABLE, reason="MARKETAUX_API_KEY is not configured")
+        logger.warning("News unavailable: MARKETAUX_API_KEY is not configured")
+        return base
+
+    current = (now_utc or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    lookback_hours = int(cfg.get("lookback_hours", 24))
+    cutoff = current - timedelta(hours=lookback_hours)
+    max_articles = int(cfg.get("max_articles_per_ticker", 3))
+    max_tickers = int(cfg.get("max_tickers_per_run", 50))
+    timeout = float(cfg.get("timeout_seconds", 15))
+    selected = _unique_tickers(tickers)[:max_tickers]
+    base["fetched_at"] = current.isoformat().replace("+00:00", "Z")
+    base["tickers_requested"] = selected
+
+    article_map: dict[str, dict[str, Any]] = {}
+    errors: dict[str, str] = {}
+    attempted: list[str] = []
+    stop_reason: str | None = None
+    open_url = opener or urlopen
+
+    for ticker in selected:
+        params = {
+            "symbols": ticker,
+            "filter_entities": "true",
+            "language": "en",
+            "published_after": cutoff.strftime("%Y-%m-%dT%H:%M"),
+            "limit": max_articles,
+            "api_token": api_key,
+        }
+        base["requests_attempted"] += 1
+        attempted.append(ticker)
+        try:
+            request = _api_request(f"{MARKETAUX_API_URL}?{urlencode(params)}")
+            with open_url(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            provider_error = _marketaux_error(payload)
+            if provider_error:
+                provider_error = _redact(provider_error, api_key)
+                errors[ticker] = provider_error
+                logger.warning("%s: news unavailable: %s", ticker, provider_error)
+                if _is_rate_limit(provider_error) or _is_auth_error(provider_error):
+                    stop_reason = provider_error
+                    break
+                continue
+            data = payload.get("data") if isinstance(payload, dict) else None
+            for raw in (data if isinstance(data, list) else [])[:max_articles]:
+                article = _parse_marketaux_article(raw, ticker, cutoff)
+                if article is None:
+                    continue
+                key = article.pop("_dedupe_key")
+                existing = article_map.get(key)
+                if existing is None:
+                    article_map[key] = article
+                else:
+                    existing["associated_tickers"] = sorted(
+                        set(existing["associated_tickers"]) | set(article["associated_tickers"])
+                    )
+                    existing["ticker_sentiment"].update(article["ticker_sentiment"])
+        except Exception as exc:
+            reason = _provider_exception_reason(exc, api_key)
+            errors[ticker] = reason
+            logger.warning("%s: news unavailable: %s", ticker, reason)
+            status_code = getattr(exc, "code", None)
+            if status_code in {400, 401, 403, 429} or _is_rate_limit(reason) or _is_auth_error(reason):
+                stop_reason = reason
+                break
+
+    if stop_reason:
+        for ticker in selected[len(attempted):]:
+            errors[ticker] = "skipped after provider error"
+    articles = sorted(article_map.values(), key=lambda item: item.get("published_at") or "", reverse=True)
+    summaries = {
+        ticker: _summarize_ticker(ticker, articles, current, cfg, provider="marketaux")
+        for ticker in selected
+    }
+    for ticker, reason in errors.items():
+        summaries[ticker]["status"] = NEWS_UNAVAILABLE
+        summaries[ticker]["reason"] = reason
+
+    succeeded = sum(1 for ticker in selected if ticker not in errors)
+    if succeeded == 0:
+        status = NEWS_UNAVAILABLE
+    elif errors or len(selected) < len(_unique_tickers(tickers)):
+        status = NEWS_PARTIAL
+    else:
+        status = NEWS_OK
+    base.update(
+        status=status,
+        reason=stop_reason,
+        articles=articles,
+        ticker_summaries=summaries,
+        errors=errors,
+    )
+    logger.info("News: %s, %d unique article(s), %d ticker error(s)", status, len(articles), len(errors))
+    return base
+
+
 def _empty_result(provider: str, lookback_hours: int) -> dict[str, Any]:
     return {
         "status": NEWS_UNAVAILABLE,
@@ -152,6 +268,11 @@ def _empty_result(provider: str, lookback_hours: int) -> dict[str, Any]:
         "ticker_summaries": {},
         "errors": {},
     }
+
+
+def _api_request(url: str) -> Request:
+    # Marketaux rejects urllib's default Python-urllib user agent with HTTP 403.
+    return Request(url, headers={"Accept": "application/json", "User-Agent": "stock-observer/0.1.2"})
 
 
 def _unique_tickers(tickers: Sequence[str]) -> list[str]:
@@ -168,9 +289,25 @@ def _provider_error(payload: Any) -> str | None:
     return None
 
 
+def _marketaux_error(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return "invalid provider response"
+    value = payload.get("error")
+    if isinstance(value, dict):
+        return str(value.get("message") or value.get("code") or value)
+    if value:
+        return str(value)
+    return None
+
+
 def _is_rate_limit(message: str) -> bool:
     lowered = message.lower()
     return any(text in lowered for text in ("rate limit", "call frequency", "calls per", "api request"))
+
+
+def _is_auth_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(text in lowered for text in ("invalid api", "invalid token", "unauthorized", "forbidden"))
 
 
 def _parse_article(raw: Any, requested_ticker: str, cutoff: datetime) -> dict[str, Any] | None:
@@ -199,6 +336,34 @@ def _parse_article(raw: Any, requested_ticker: str, cutoff: datetime) -> dict[st
         "summary": str(raw.get("summary") or "").strip() or None,
         "associated_tickers": [requested_ticker],
         "ticker_sentiment": {requested_ticker: ticker_data},
+    }
+
+
+def _parse_marketaux_article(raw: Any, requested_ticker: str, cutoff: datetime) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = str(raw.get("title") or "").strip()
+    url = str(raw.get("url") or "").strip()
+    if not title or not url or urlsplit(url).scheme.lower() not in {"http", "https"}:
+        return None
+    published = _parse_iso_time(raw.get("published_at"))
+    if published is None or published < cutoff:
+        return None
+    normalized_url = normalize_url(url)
+    dedupe_key = normalized_url or "title:" + hashlib.sha256(title.casefold().encode("utf-8")).hexdigest()
+    entity = _marketaux_entity(raw.get("entities"), requested_ticker)
+    article_id = str(raw.get("uuid") or "").strip() or hashlib.sha256(dedupe_key.encode("utf-8")).hexdigest()[:16]
+    summary = str(raw.get("snippet") or raw.get("description") or "").strip() or None
+    return {
+        "_dedupe_key": dedupe_key,
+        "id": article_id,
+        "title": title,
+        "source": str(raw.get("source") or "Unknown"),
+        "published_at": published.isoformat().replace("+00:00", "Z"),
+        "url": url,
+        "summary": summary,
+        "associated_tickers": [requested_ticker],
+        "ticker_sentiment": {requested_ticker: entity},
     }
 
 
@@ -232,6 +397,16 @@ def _parse_provider_time(value: Any) -> datetime | None:
     return None
 
 
+def _parse_iso_time(value: Any) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def _ticker_sentiment(items: Any, ticker: str) -> dict[str, Any]:
     if isinstance(items, list):
         for item in items:
@@ -244,7 +419,34 @@ def _ticker_sentiment(items: Any, ticker: str) -> dict[str, Any]:
     return {"sentiment_score": None, "sentiment_label": None, "relevance_score": None}
 
 
-def _summarize_ticker(ticker: str, articles: Sequence[Mapping[str, Any]], now: datetime, cfg) -> dict[str, Any]:
+def _marketaux_entity(items: Any, ticker: str) -> dict[str, Any]:
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and str(item.get("symbol", "")).upper() == ticker:
+                score = _float_or_none(item.get("sentiment_score"))
+                match_score = _float_or_none(item.get("match_score"))
+                return {
+                    "sentiment_score": score,
+                    "sentiment_label": _marketaux_sentiment_label(score),
+                    "relevance_score": match_score,
+                    "match_score": match_score,
+                }
+    return {
+        "sentiment_score": None,
+        "sentiment_label": None,
+        "relevance_score": None,
+        "match_score": None,
+    }
+
+
+def _summarize_ticker(
+    ticker: str,
+    articles: Sequence[Mapping[str, Any]],
+    now: datetime,
+    cfg,
+    *,
+    provider: str,
+) -> dict[str, Any]:
     relevant = [article for article in articles if ticker in article.get("associated_tickers", [])]
     positive = neutral = negative = 0
     weighted = weight_total = 0.0
@@ -255,9 +457,10 @@ def _summarize_ticker(ticker: str, articles: Sequence[Mapping[str, Any]], now: d
         data = (article.get("ticker_sentiment") or {}).get(ticker) or {}
         score = _float_or_none(data.get("sentiment_score"))
         if score is not None:
-            if score > 0.15:
+            neutral_band = 0.0 if provider == "marketaux" else 0.15
+            if score > neutral_band:
                 positive += 1
-            elif score < -0.15:
+            elif score < -neutral_band:
                 negative += 1
             else:
                 neutral += 1
@@ -276,7 +479,9 @@ def _summarize_ticker(ticker: str, articles: Sequence[Mapping[str, Any]], now: d
         "neutral_count": neutral,
         "negative_count": negative,
         "sentiment_score_24h": round(aggregate, 6) if aggregate is not None else None,
-        "sentiment_label_24h": sentiment_label(aggregate),
+        "sentiment_label_24h": (
+            _marketaux_sentiment_label(aggregate) if provider == "marketaux" else sentiment_label(aggregate)
+        ),
         "article_ids": article_ids,
     }
 
@@ -295,6 +500,16 @@ def sentiment_label(score: float | None) -> str | None:
     return "Neutral"
 
 
+def _marketaux_sentiment_label(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score > 0:
+        return "Positive"
+    if score < 0:
+        return "Negative"
+    return "Neutral"
+
+
 def _float_or_none(value: Any) -> float | None:
     try:
         return float(value)
@@ -306,6 +521,20 @@ def _safe_error(exc: Exception, api_key: str) -> str:
     """异常可能携带完整请求 URL；任何产物或日志都不得包含 API key。"""
     message = _redact(str(exc), api_key)
     return f"{type(exc).__name__}: {message}"
+
+
+def _provider_exception_reason(exc: Exception, api_key: str) -> str:
+    if not isinstance(exc, HTTPError):
+        return _safe_error(exc, api_key)
+    detail = ""
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+        payload = json.loads(body)
+        detail = _marketaux_error(payload) or body
+    except (OSError, ValueError, TypeError):
+        detail = ""
+    suffix = f": {detail}" if detail else ""
+    return _redact(f"HTTPError {exc.code}: {exc.reason}{suffix}", api_key)
 
 
 def _redact(message: str, api_key: str) -> str:

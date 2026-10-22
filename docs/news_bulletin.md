@@ -14,19 +14,22 @@ v0.1.2 不允许 sentiment 自动触发 BUY / SELL。
 DATA SOURCE
 
 Primary:
-Alpha Vantage NEWS_SENTIMENT
+Marketaux Finance & Market News
+
+Fallback adapter:
+Alpha Vantage NEWS_SENTIMENT（premium key only）
 
 Config:
 
 news:
   enabled: true
-  provider: "alpha_vantage"
+  provider: "marketaux"
   lookback_hours: 24
-  max_articles_per_ticker: 5
-  max_tickers_per_run: 15
+  max_articles_per_ticker: 3
+  max_tickers_per_run: 50
 
 API key:
-环境变量 ALPHA_VANTAGE_API_KEY
+环境变量 MARKETAUX_API_KEY
 
 禁止：
 
@@ -42,7 +45,7 @@ FETCH STRATEGY
 
 1. 获取 watchlist
 2. 对每个 ticker 请求最近 24h 新闻
-3. 每 ticker 最多保留 5 条
+3. 每 ticker 最多保留配置数量（Marketaux free plan 默认 3 条）
 4. 去重
 5. 保存 metadata + sentiment
 6. 生成 ticker-level sentiment summary
@@ -105,8 +108,8 @@ sentiment_score_24h
 
 不要只使用简单文章数量判断情绪。
 
-如果 provider 提供 ticker relevance，
-聚合时优先按 relevance weighting。
+如果 provider 提供 ticker relevance 或 entity match score，
+聚合时优先以它作为相关度权重。
 
 可选：
 

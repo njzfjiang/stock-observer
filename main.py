@@ -14,6 +14,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from src import __version__
 from src.config import DEFAULT_CONFIG_NAME, ConfigError, load_config, load_watchlist
 from src.logging_config import setup_logging
@@ -36,6 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # 本地开发可把 provider key 放在项目 .env；已存在的进程环境变量优先。
+    config_path = Path(args.config).expanduser().resolve()
+    load_dotenv(config_path.parent / ".env", override=False)
 
     try:
         settings = load_config(args.config)

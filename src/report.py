@@ -481,7 +481,7 @@ def _definitions_section(settings, benchmark: str, period: str, interval: str) -
         f"权重在 `config.yaml` 的 `attention_score` 段，可改。"
     )
     lines.append(f"- **数据窗口**：`period={period}`, `interval={interval}`（{benchmark} 为相对强弱基准）。")
-    lines.append("- **新闻情绪**：按 ticker relevance 与时间衰减加权；无有效新闻时为 null，而不是 neutral。新闻与技术事实分开展示，不作因果判断。")
+    lines.append("- **新闻情绪**：按 provider 的 ticker relevance/match score 与时间衰减加权；无有效新闻时为 null，而不是 neutral。新闻与技术事实分开展示，不作因果判断。")
     lines.append("")
     lines.append("**免责声明**：本工具是市场监控 / 数据摘要工具，不是自动交易系统，也不是投资顾问。所有标签只描述当前状态，不构成任何买入或卖出建议。行情数据来自 Yahoo Finance（经 yfinance），仅供家庭/个人研究使用，不对外分发或转售。")
     lines.append("")

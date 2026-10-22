@@ -211,7 +211,7 @@ def test_news_is_attached_without_changing_attention_score(local_settings, offli
 
     def news_fetch(_tickers, _settings, _logger):
         return {
-            "status": "OK", "provider": "alpha_vantage", "lookback_hours": 24,
+            "status": "OK", "provider": "marketaux", "lookback_hours": 24,
             "articles": [article], "errors": {},
             "ticker_summaries": {
                 "AAPL": {

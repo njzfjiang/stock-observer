@@ -36,7 +36,7 @@
    - `trend`：由 Python 规则判定（STRONG_UPTREND / UPTREND / NEUTRAL / DOWNTREND / STRONG_DOWNTREND / INSUFFICIENT_DATA）。
    - `alerts`：只描述状态的标签（HIGH_VOLUME / LARGE_MOVE / OVERBOUGHT / OVERSOLD / NEW_20D_HIGH / NEW_20D_LOW），**不是买卖信号**。
    - `attention_score`：0–100，表示「今天值不值得打开看一眼」，附 `attention_score_breakdown` 逐项证据；**分数高不等于看涨**。
-   - `news`：Alpha Vantage 新闻与按 relevance/时间衰减加权的 ticker 情绪；仅作辅助事实，不参与技术评分。
+   - `news`：Marketaux 新闻与按 entity match score/时间衰减加权的 ticker 情绪；仅作辅助事实，不参与技术评分。
    - `data_unavailable`：抓取失败的标的。**禁止推测或补全这些标的的数值**，只能写「数据不足」。
 
 4. 这个 Prompt 的重点不是免责声明文学，而是**禁止模型补数据**：Python 是事实层，模型是解释层。

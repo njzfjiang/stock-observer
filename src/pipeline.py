@@ -107,7 +107,7 @@ def run_pipeline(
     except Exception as exc:  # 自定义 provider/注入函数也必须遵守 fail-safe
         logger.warning("News unavailable: %s: %s", type(exc).__name__, exc)
         news = {
-            "status": "NEWS_UNAVAILABLE", "provider": settings.get("news", "provider", default="alpha_vantage"),
+            "status": "NEWS_UNAVAILABLE", "provider": settings.get("news", "provider", default="marketaux"),
             "lookback_hours": settings.get("news", "lookback_hours", default=24), "reason": f"{type(exc).__name__}: {exc}",
             "articles": [], "ticker_summaries": {}, "errors": {},
         }

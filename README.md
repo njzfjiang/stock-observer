@@ -176,7 +176,7 @@ attention_score:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest            # 62 个测试，全部离线（注入假数据，不联网）
+python -m pytest            # 64 个测试，全部离线（注入假数据，不联网）
 ```
 
 覆盖：指标口径 vs pandas/numpy 手算、数据不足时不许出现 NaN、趋势五分类与边界、异常标签的阈值边界
@@ -220,8 +220,8 @@ AI 买卖建议、复杂回测、数据库、React Dashboard。
 2. 在 **Build and deployment → Source** 选择 **GitHub Actions**；
 3. 在 **Actions** 页面手动运行一次 **Daily market report**，或等待下一次定时任务。
 
-新闻情绪使用 Alpha Vantage `NEWS_SENTIMENT`。在本地设置环境变量 `ALPHA_VANTAGE_API_KEY`；
-在 GitHub Actions 中创建同名 Repository secret。未配置、限流或网络失败时会显示
+新闻情绪默认使用 Marketaux。可在项目根目录的 `.env` 设置 `MARKETAUX_API_KEY`；
+在 GitHub Actions 中创建同名 Repository secret。`.env` 已被 gitignore，不会提交。未配置、限流或网络失败时会显示
 `NEWS_UNAVAILABLE`，但技术指标报告与 Pages 发布仍会继续。
 
 发布地址通常为 `https://<github-user>.github.io/stock-observer/`。定时工作流只会从 GitHub
